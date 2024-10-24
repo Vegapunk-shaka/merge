@@ -1,54 +1,53 @@
+import os
+import logging
+from datetime import datetime as dt
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from download_upload import download_file, upload_file
 from merge_videos import merge_files
-import os
 
-# Initialize the bot with your API credentials
+# Configure logging
+logging.basicConfig(
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+# Bot configuration
 api_id = "18530329"
 api_hash = "edefebe693e029e6aca6c7c1df2745ec"
 bot_token = "7632646326:AAHUdQR9PFEgLWPAbHlNupsvttSmd4uUMK4"
-
 app = Client("file_merger_bot", api_id=api_id, api_hash=api_hash, bot_token=bot_token)
 
-# Store the file info uploaded by the user
+# Store the uploaded files
 uploaded_files = []
-awaiting_filename = {}  # Dictionary to track when the bot is awaiting a filename from the user
+uptime = dt.now()
 
 @app.on_message(filters.command("start"))
 async def start(client, message: Message):
-    await message.reply_text("Welcome! Please send me the files you want to merge. After uploading, reply with 'done' to start the download.")
+    await message.reply_text("Welcome! Please send me the files you want to merge or watermark. After uploading, reply with 'done' to start processing.")
 
 @app.on_message(filters.command("cancel"))
 async def cancel(client, message: Message):
-    """Cancel the current merging process and clear uploaded files."""
+    """Cancel the current process and clear uploaded files."""
     if uploaded_files:
         uploaded_files.clear()
-        await message.reply_text("The current merging process has been canceled, and uploaded files have been cleared.")
+        await message.reply_text("The current process has been canceled, and uploaded files have been cleared.")
     else:
-        await message.reply_text("There is no ongoing merging process.")
+        await message.reply_text("There is no ongoing process.")
 
 @app.on_message(filters.command("restart"))
 async def restart(client, message: Message):
     """Restart the bot by clearing the uploaded files."""
     uploaded_files.clear()
-    awaiting_filename.clear()
-    await message.reply_text("The bot has been restarted. You can now send me new files to merge.")
+    await message.reply_text("The bot has been restarted. You can now send me new files.")
 
-# Handle document uploads
-@app.on_message(filters.document)
-async def handle_document(client, message: Message):
+@app.on_message(filters.document | filters.video)
+async def handle_file_upload(client, message: Message):
     uploaded_files.append(message)
-    await message.reply_text(f"Document {message.document.file_name} has been uploaded. Send more files, or type 'done' when finished.")
+    await message.reply_text(f"{message.document.file_name if message.document else message.video.file_name} has been uploaded. Send more files, or type 'done' when finished.")
 
-# Handle video uploads
-@app.on_message(filters.video)
-async def handle_video(client, message: Message):
-    uploaded_files.append(message)
-    await message.reply_text(f"Video {message.video.file_name} has been uploaded. Send more files, or type 'done' when finished.")
-
-# Handle replies with 'merge' to add the file to the download list
-@app.on_message(filters.text & filters.reply & filters.regex("merge"))
+@app.on_message(filters.text & filters.reply & filters.regex("add"))
 async def handle_merge(client, message: Message):
     if message.reply_to_message and (message.reply_to_message.document or message.reply_to_message.video):
         uploaded_files.append(message.reply_to_message)
@@ -56,49 +55,52 @@ async def handle_merge(client, message: Message):
     else:
         await message.reply_text("Please reply to a document or video file to add it to the merging list.")
 
-# Handle replies with 'done' to initiate the download and merging process
 @app.on_message(filters.text & filters.regex("done"))
 async def confirm_upload_complete(client, message: Message):
-    if len(uploaded_files) < 2:
-        await message.reply_text("Please upload at least two files before merging.")
-    else:
-        await message.reply_text("All files uploaded. What would you like to name the merged file? (without extension)")
-        awaiting_filename[message.chat.id] = True  # Set the bot to await a filename from the user
+    if len(uploaded_files) == 0:
+        await message.reply_text("No files uploaded. Please upload at least one file.")
+        return
 
-# Handle text responses that are filenames (but not commands)
-@app.on_message(filters.text & ~filters.command("start") & ~filters.command("cancel") & ~filters.command("restart"))
-async def capture_filename(client, message: Message):
-    if message.chat.id in awaiting_filename:
-        # Get the filename from the user's message
-        output_file_name = message.text.strip() + ".mp4"  # Append .mp4 extension
-        await message.reply_text(f"Starting download of uploaded files...")
+    await message.reply_text("What would you like to name the output file? (without extension)")
+    user_response = await app.listen(message.chat.id)
+    output_file_name = user_response.text.strip()
 
-        downloaded_file_paths = []
+    # Start processing the files with a single message update
+    await message.reply_text("Starting download and merging process... Please wait while we process your files.")
+    downloaded_file_paths = []
 
-        # Download each uploaded file
-        for file_msg in uploaded_files:
-            file_path = await download_file(client, file_msg)
+    # Download each uploaded file
+    for file_msg in uploaded_files:
+        logger.info(f"Downloading file: {file_msg.document.file_name if file_msg.document else file_msg.video.file_name}")
+        file_path = await download_file(client, file_msg)
+        if file_path:
             downloaded_file_paths.append(file_path)
 
-        # After downloading all files, start merging
-        await message.reply_text("Files downloaded. Merging files, please wait...")
+    # Process the downloaded files
+    if len(downloaded_file_paths) == 1:
+        watermarked_file = await merge_files(client, message, [downloaded_file_paths[0]], output_file_name)
+
+        if watermarked_file:
+            await message.reply_text("Watermark added! Uploading the file...")
+            await upload_file(client, message, watermarked_file)
+            await message.reply_text("File uploaded successfully!")
+        else:
+            await message.reply_text("Watermarking failed.")
+    else:
         merged_file = await merge_files(client, message, downloaded_file_paths, output_file_name)
 
         if merged_file:
-            await message.reply_text("Merging complete! Uploading the merged file...")
+            await message.reply_text("Merging complete! Uploading the file...")
             await upload_file(client, message, merged_file)
             await message.reply_text("Merged file uploaded successfully!")
-
-            # Clean up downloaded files
-            for f in downloaded_file_paths:
-                if os.path.exists(f):
-                    os.remove(f)
-            uploaded_files.clear()  # Clear the list after merging
         else:
             await message.reply_text("Merging failed.")
 
-        # Clear the awaiting filename state after processing
-        del awaiting_filename[message.chat.id]
+    # Clean up downloaded files and reset uploaded files
+    for f in downloaded_file_paths:
+        if os.path.exists(f):
+            os.remove(f)
+    uploaded_files.clear()
 
 # Run the bot
 app.run()
