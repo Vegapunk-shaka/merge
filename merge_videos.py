@@ -1,11 +1,9 @@
 import os
 import threading
 import time
-from moviepy.editor import VideoFileClip, concatenate_videoclips, TextClip, CompositeVideoClip, ColorClip
+from moviepy.editor import VideoFileClip, concatenate_videoclips, CompositeVideoClip
 from pyrogram.types import Message
 import logging
-from moviepy.config import change_settings
-change_settings({"IMAGEMAGICK_BINARY": "/usr/bin/convert"})
 
 # Suppress Pyrogram INFO logs
 logging.getLogger("pyrogram").setLevel(logging.WARNING)
@@ -13,12 +11,12 @@ logging.getLogger("pyrogram").setLevel(logging.WARNING)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-async def merge_files(client, message: Message, file_paths, output_file_name, frame_rate=30, watermark_text="Sample Watermark", font_path=None):
+async def merge_files(client, message: Message, file_paths, output_file_name, watermark_file="abc.mp4", frame_rate=30):
     # The output file name is now passed directly to the function
     output_file = output_file_name + ".mp4"  # Append .mp4 extension
 
-    # Inform the user that merging has started
-    progress_message = await message.reply_text(f"Merging files... 0% (Output: {output_file_name})")
+    # Inform the user that processing has started
+    progress_message = await message.reply_text(f"Processing files... 0% (Output: {output_file_name})")
 
     try:
         # Load all video files as MoviePy clips
@@ -28,24 +26,24 @@ async def merge_files(client, message: Message, file_paths, output_file_name, fr
             clip = clip.set_fps(frame_rate)  # Set the frame rate for each clip
             video_clips.append(clip)
 
-        # Concatenate all clips into one video
-        final_clip = concatenate_videoclips(video_clips, method="compose")
+        if len(video_clips) > 1:
+            # Concatenate all clips into one video if there is more than one video
+            final_clip = concatenate_videoclips(video_clips, method="compose")
+        else:
+            # If there's only one clip, use it as the final clip directly
+            final_clip = video_clips[0]
 
-        # Create the text watermark
-        text_clip = TextClip(watermark_text, fontsize=24, font=font_path or "Arial", color="white")
-        text_clip = text_clip.set_duration(final_clip.duration).set_position(("right", "top"))
+        # Load the watermark video (abc.mp4)
+        watermark_clip = VideoFileClip(watermark_file).set_duration(final_clip.duration)
 
-        # Create a rectangular border behind the text
-        border_width = text_clip.w + 20  # Add some padding
-        border_height = text_clip.h + 10  # Add some padding
-        border_clip = ColorClip(size=(border_width, border_height), color=(0, 0, 0), ismask=False)  # Black border
-        border_clip = border_clip.set_duration(final_clip.duration).set_position(("right", "top"))
+        # Position the watermark in the upper right corner
+        watermark_top_right = watermark_clip.set_position(("right", "top"))
 
-        # Set the opacity of the border
-        border_clip = border_clip.set_opacity(0.5)
+        # Position another instance of the watermark in the lower left corner
+        watermark_bottom_left = watermark_clip.set_position(("left", "bottom"))
 
-        # Overlay the border and text on the final video
-        watermarked_clip = CompositeVideoClip([final_clip, border_clip, text_clip])
+        # Overlay the watermark video on the final video in both positions
+        watermarked_clip = CompositeVideoClip([final_clip, watermark_top_right, watermark_bottom_left])
 
         # Function to write video and report progress
         def write_video():
@@ -54,7 +52,7 @@ async def merge_files(client, message: Message, file_paths, output_file_name, fr
             watermarked_clip.write_videofile(
                 output_file,
                 fps=frame_rate,
-                codec="libx265",  # Using libx264 codec
+                codec="libx265",  # Using libx265 codec
                 preset="veryfast",  # Adjust for speed/quality tradeoff
                 ffmpeg_params=["-crf", "30"],  # Pass CRF via ffmpeg_params
                 threads=4
@@ -68,12 +66,12 @@ async def merge_files(client, message: Message, file_paths, output_file_name, fr
         # Wait for the thread to finish
         write_thread.join()
 
-        # Inform the user that merging is complete
-        await progress_message.edit_text(f"Merging complete! File saved as: {output_file}")
+        # Inform the user that processing is complete
+        await progress_message.edit_text(f"Processing complete! File saved as: {output_file}")
         return output_file
 
     except Exception as e:
-        await progress_message.edit_text(f"Merging failed: {str(e)}")
+        await progress_message.edit_text(f"Processing failed: {str(e)}")
         return None
 
     finally:
