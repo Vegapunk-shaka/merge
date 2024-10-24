@@ -6,7 +6,7 @@ import os
 
 api_id = "18530329"
 api_hash = "edefebe693e029e6aca6c7c1df2745ec"
-bot_token = "7936026368:AAGUVaduGFrc6XwUy9BOrCX0gcNdTytO_xE"
+bot_token = "7632646326:AAHUdQR9PFEgLWPAbHlNupsvttSmd4uUMK4"
 
 app = Client("file_merger_bot", api_id=api_id, api_hash=api_hash, bot_token=bot_token)
 
@@ -16,6 +16,21 @@ uploaded_files = []
 @app.on_message(filters.command("start"))
 async def start(client, message: Message):
     await message.reply_text("Welcome! Please send me the files you want to merge. After uploading, reply with 'done' to start the download.")
+
+@app.on_message(filters.command("cancel"))
+async def cancel(client, message: Message):
+    """Cancel the current merging process and clear uploaded files."""
+    if uploaded_files:
+        uploaded_files.clear()
+        await message.reply_text("The current merging process has been canceled, and uploaded files have been cleared.")
+    else:
+        await message.reply_text("There is no ongoing merging process.")
+
+@app.on_message(filters.command("restart"))
+async def restart(client, message: Message):
+    """Restart the bot by clearing the uploaded files."""
+    uploaded_files.clear()
+    await message.reply_text("The bot has been restarted. You can now send me new files to merge.")
 
 # Handle document uploads
 @app.on_message(filters.document)
@@ -29,13 +44,29 @@ async def handle_video(client, message: Message):
     uploaded_files.append(message)
     await message.reply_text(f"Video {message.video.file_name} has been uploaded. Send more files, or type 'done' when finished.")
 
+# Handle replies with 'merge' to add the file to the download list
+@app.on_message(filters.text & filters.reply & filters.regex("merge"))
+async def handle_merge(client, message: Message):
+    if message.reply_to_message and (message.reply_to_message.document or message.reply_to_message.video):
+        uploaded_files.append(message.reply_to_message)
+        await message.reply_text(f"Added {message.reply_to_message.document.file_name if message.reply_to_message.document else message.reply_to_message.video.file_name} to the merging list.")
+    else:
+        await message.reply_text("Please reply to a document or video file to add it to the merging list.")
+
 # Start downloading and merging after 'done' command
 @app.on_message(filters.text & filters.regex("done"))
 async def confirm_upload_complete(client, message: Message):
     if len(uploaded_files) < 2:
         await message.reply_text("Please upload at least two files before merging.")
     else:
-        await message.reply_text("All files uploaded. Starting download...")
+        await message.reply_text("All files uploaded. What would you like to name the merged file? (without extension)")
+
+        # Wait for the user's response for the output file name
+        user_response = await client.listen(message.chat.id)
+        output_file_name = user_response.text.strip() + ".mp4"  # Append .mp4 extension
+        
+        await message.reply_text("Starting download...")
+
         downloaded_file_paths = []
 
         # Download each uploaded file
@@ -45,16 +76,18 @@ async def confirm_upload_complete(client, message: Message):
 
         # After downloading all files, start merging
         await message.reply_text("Files downloaded. Merging files, please wait...")
-        merged_file = await merge_files(client, message, downloaded_file_paths)
+        merged_file = await merge_files(client, message, downloaded_file_paths, output_file_name)
 
         if merged_file:
             await message.reply_text("Merging complete! Uploading the merged file...")
             await upload_file(client, message, merged_file)
             await message.reply_text("Merged file uploaded successfully!")
-            # Clean up
+
+            # Clean up downloaded files
             for f in downloaded_file_paths:
-                os.remove(f)
-            uploaded_files.clear()
+                if os.path.exists(f):
+                    os.remove(f)
+            uploaded_files.clear()  # Clear the list after merging
         else:
             await message.reply_text("Merging failed.")
 
