@@ -4,6 +4,8 @@ import time
 from moviepy.editor import VideoFileClip, concatenate_videoclips, TextClip, CompositeVideoClip, ColorClip
 from pyrogram.types import Message
 import logging
+from moviepy.config import change_settings
+change_settings({"IMAGEMAGICK_BINARY": "/usr/bin/convert"})
 
 # Suppress Pyrogram INFO logs
 logging.getLogger("pyrogram").setLevel(logging.WARNING)
