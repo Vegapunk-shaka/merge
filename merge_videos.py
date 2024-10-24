@@ -1,39 +1,71 @@
 import os
 import threading
 import time
-from moviepy.editor import VideoFileClip, concatenate_videoclips, CompositeVideoClip
+import subprocess
 from pyrogram.types import Message
 import logging
 
 # Suppress Pyrogram INFO logs
 logging.getLogger("pyrogram").setLevel(logging.WARNING)
-# Enable logging in MoviePy
+# Enable logging in the application
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class VideoWriterThread(threading.Thread):
     """Custom thread class to handle video writing with exception capturing."""
-    def __init__(self, watermarked_clip, output_file, frame_rate):
+    def __init__(self, input_files, output_file, watermark_file=None, frame_rate=30):
         super().__init__()
-        self.watermarked_clip = watermarked_clip
+        self.input_files = input_files
         self.output_file = output_file
-        self.frame_rate = 25
+        self.watermark_file = watermark_file
+        self.frame_rate = frame_rate
         self.exception = None
 
     def run(self):
         try:
             logger.info("Starting video write process...")
-            self.watermarked_clip.write_videofile(
-                self.output_file,
-                fps=self.frame_rate,
-                codec="libx265",  # Using libx265 codec
-                preset="ultrafast",  # Adjust for speed/quality tradeoff
-                ffmpeg_params=["-crf", "30"],  # Pass CRF via ffmpeg_params
-                threads=10
-            )
+
+            # Create a temporary file for the concat filter
+            with open('concat_list.txt', 'w') as f:
+                for file in self.input_files:
+                    f.write(f"file '{file}'\n")
+
+            # Build the FFmpeg command
+            command = [
+                'ffmpeg',
+                '-y',  # Overwrite output files without asking
+                '-f', 'concat',  # Use concat demuxer
+                '-safe', '0',  # Allow unsafe file paths
+                '-i', 'concat_list.txt',  # Input file list for concatenation
+            ]
+            
+            # If a watermark file is specified, add it to the command
+            if self.watermark_file:
+                command += [
+                    '-i', self.watermark_file,
+                    '-filter_complex',
+                    # Position the watermark in the upper right corner
+                    "[0:v][1:v]overlay=W-w-10:10",  # Correct overlay parameters for upper right
+                ]
+            else:
+                command += ['-filter_complex', 'null']
+
+            # Finalizing the command
+            command += [
+                '-r', str(self.frame_rate),  # Set frame rate
+                '-c:v', 'libx265',  # Using libx265 codec
+                '-preset', 'veryfast',  # Adjust for speed/quality tradeoff
+                '-crf', '30',  # Constant Rate Factor
+                self.output_file
+            ]
+
+            # Execute the FFmpeg command
+            subprocess.run(command, check=True)
             logger.info("Video write process completed.")
         except Exception as e:
             self.exception = e
+        finally:
+            os.remove('concat_list.txt')  # Clean up temporary file
 
 async def merge_files(client, message: Message, file_paths, output_file_name, watermark_file="abc.mp4", frame_rate=30):
     output_file = output_file_name + ".mp4"  # Append .mp4 extension
@@ -43,31 +75,8 @@ async def merge_files(client, message: Message, file_paths, output_file_name, wa
     last_progress_text = None  # To track last progress message content
 
     try:
-        # Load all video files as MoviePy clips
-        video_clips = []
-        for file_path in file_paths:
-            clip = VideoFileClip(file_path)
-            clip = clip.set_fps(frame_rate)  # Set the frame rate for each clip
-            video_clips.append(clip)
-
-        if len(video_clips) > 1:
-            # Concatenate all clips into one video if there is more than one video
-            final_clip = concatenate_videoclips(video_clips, method="compose")
-        else:
-            final_clip = video_clips[0]
-
-        # Load the watermark video and loop it for the duration of the final clip
-        watermark_clip = VideoFileClip(watermark_file).loop(duration=final_clip.duration)
-
-        # Position watermarks
-        watermark_top_right = watermark_clip.set_position(("right", "top"))
-        watermark_bottom_left = watermark_clip.set_position(("left", "bottom"))
-
-        # Overlay watermarks
-        watermarked_clip = CompositeVideoClip([final_clip, watermark_top_right, watermark_bottom_left])
-
         # Start writing the video in a separate thread
-        writer_thread = VideoWriterThread(watermarked_clip, output_file, frame_rate)
+        writer_thread = VideoWriterThread(file_paths, output_file, watermark_file, frame_rate)
         writer_thread.start()
 
         # Polling the thread's progress (pseudo-progress)
@@ -92,8 +101,3 @@ async def merge_files(client, message: Message, file_paths, output_file_name, wa
     except Exception as e:
         await progress_message.edit_text(f"Processing failed: {str(e)}")
         return None
-
-    finally:
-        # Clean up the loaded clips
-        for clip in video_clips:
-            clip.close()
