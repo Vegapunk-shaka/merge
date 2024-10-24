@@ -1,4 +1,10 @@
 electrogram
-tqdm
-ffmpeg-python
-moviepy
+moviepy==1.0.3     # For video processing and watermarking
+ffmpeg==1.4        # Needed by moviepy to process videos
+python-dotenv==1.0.0  # If using environment variables (optional)
+
+# Logging and other utilities
+rich==12.6.0  # Optional, useful for more advanced logging output
+
+# You may also need to include these if your system doesn't already have them:
+aiohttp==3.8.5   # Pyrogram's async HTTP client dependency (if not included automatically)
