@@ -27,9 +27,9 @@ class VideoWriterThread(threading.Thread):
                 self.output_file,
                 fps=self.frame_rate,
                 codec="libx265",  # Using libx265 codec
-                preset="veryfast",  # Adjust for speed/quality tradeoff
+                preset="ultrafast",  # Adjust for speed/quality tradeoff
                 ffmpeg_params=["-crf", "30"],  # Pass CRF via ffmpeg_params
-                threads=4
+                threads=10
             )
             logger.info("Video write process completed.")
         except Exception as e:
