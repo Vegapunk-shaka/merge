@@ -17,7 +17,7 @@ class VideoWriterThread(threading.Thread):
         super().__init__()
         self.watermarked_clip = watermarked_clip
         self.output_file = output_file
-        self.frame_rate = frame_rate
+        self.frame_rate = 25
         self.exception = None
 
     def run(self):
