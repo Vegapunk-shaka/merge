@@ -10,8 +10,9 @@ bot_token = "7632646326:AAHUdQR9PFEgLWPAbHlNupsvttSmd4uUMK4"
 
 app = Client("file_merger_bot", api_id=api_id, api_hash=api_hash, bot_token=bot_token)
 
-# Store the file info uploaded by the user
+# Store the file info uploaded by the user and the current state of the merging process
 uploaded_files = []
+awaiting_filename = {}
 
 @app.on_message(filters.command("start"))
 async def start(client, message: Message):
@@ -30,6 +31,7 @@ async def cancel(client, message: Message):
 async def restart(client, message: Message):
     """Restart the bot by clearing the uploaded files."""
     uploaded_files.clear()
+    awaiting_filename.clear()  # Clear awaiting filename state as well
     await message.reply_text("The bot has been restarted. You can now send me new files to merge.")
 
 # Handle document uploads
@@ -44,16 +46,7 @@ async def handle_video(client, message: Message):
     uploaded_files.append(message)
     await message.reply_text(f"Video {message.video.file_name} has been uploaded. Send more files, or type 'done' when finished.")
 
-# Handle replies with 'merge' to add the file to the download list
-@app.on_message(filters.text & filters.reply & filters.regex("merge"))
-async def handle_merge(client, message: Message):
-    if message.reply_to_message and (message.reply_to_message.document or message.reply_to_message.video):
-        uploaded_files.append(message.reply_to_message)
-        await message.reply_text(f"Added {message.reply_to_message.document.file_name if message.reply_to_message.document else message.reply_to_message.video.file_name} to the merging list.")
-    else:
-        await message.reply_text("Please reply to a document or video file to add it to the merging list.")
-
-# Start downloading and merging after 'done' command
+# Handle the 'done' command to proceed to filename input
 @app.on_message(filters.text & filters.regex("done"))
 async def confirm_upload_complete(client, message: Message):
     if len(uploaded_files) < 2:
@@ -61,11 +54,16 @@ async def confirm_upload_complete(client, message: Message):
     else:
         await message.reply_text("All files uploaded. What would you like to name the merged file? (without extension)")
 
-        # Wait for the user's response for the output file name
-        user_response = await client.listen(message.chat.id)
-        output_file_name = user_response.text.strip() + ".mp4"  # Append .mp4 extension
-        
-        await message.reply_text("Starting download...")
+        # Store the user's state that we are awaiting a filename
+        awaiting_filename[message.chat.id] = True
+
+# Capture the filename and start the merging process
+@app.on_message(filters.text & ~filters.command)
+async def capture_filename(client, message: Message):
+    if message.chat.id in awaiting_filename:
+        # Get the filename from the user's message
+        output_file_name = message.text.strip() + ".mp4"  # Append .mp4 extension
+        await message.reply_text(f"Starting download of uploaded files...")
 
         downloaded_file_paths = []
 
@@ -90,5 +88,8 @@ async def confirm_upload_complete(client, message: Message):
             uploaded_files.clear()  # Clear the list after merging
         else:
             await message.reply_text("Merging failed.")
+
+        # Clear the awaiting filename state after processing
+        del awaiting_filename[message.chat.id]
 
 app.run()
