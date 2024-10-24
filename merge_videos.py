@@ -56,8 +56,8 @@ async def merge_files(client, message: Message, file_paths, output_file_name, wa
         else:
             final_clip = video_clips[0]
 
-        # Load the watermark video
-        watermark_clip = VideoFileClip(watermark_file).set_duration(final_clip.duration)
+        # Load the watermark video and loop it for the duration of the final clip
+        watermark_clip = VideoFileClip(watermark_file).loop(duration=final_clip.duration)
 
         # Position watermarks
         watermark_top_right = watermark_clip.set_position(("right", "top"))
